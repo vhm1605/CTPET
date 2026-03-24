@@ -16,6 +16,7 @@
 
 import os
 import copy
+import torch.nn.functional as F
 from dataclasses import dataclass, field
 import json
 import logging
@@ -37,14 +38,13 @@ from llava.mm_utils import tokenizer_image_token
 
 from PIL import Image
 import os 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 import wandb
-wandb.login(key='c0bf463d253eb9147fbe555216398f2838fe517c')
+wandb.login(key='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')
 wandb.init(
     project="VLM",
-    name="CTViT_Mistral_align_region",   
-    entity="dacthai2807"
+    name="CTViT_Mistral_lora_region_1"
 )
 
 
@@ -99,7 +99,7 @@ class TrainingArguments(transformers.TrainingArguments):
     freeze_mm_mlp_adapter: bool = field(default=False)
     mpt_attn_impl: Optional[str] = field(default="triton")
     model_max_length: int = field(
-        default=512,
+        default=4096,
         metadata={
             "help":
             "Maximum sequence length. Sequences will be right padded (and possibly truncated)."
@@ -379,6 +379,13 @@ def preprocess_llama_2(
             truncation=True,
         ).input_ids
 
+        for idx, prompt in enumerate(conversations):
+            if has_image:
+                tok_len = len(tokenizer_image_token(prompt, tokenizer))
+            else:
+                tok_len = len(tokenizer(prompt).input_ids)
+            print(f"[DEBUG token length] sample {idx}: {tok_len}/{tokenizer.model_max_length}")
+
     targets = input_ids.clone()
 
     assert conv.sep_style == conversation_lib.SeparatorStyle.LLAMA_2
@@ -446,7 +453,12 @@ def preprocess_v1(
             role = roles[sentence["from"]]
             assert role == conv.roles[j % 2], f"{i}"
             conv.append_message(role, sentence["value"])
-        conversations.append(conv.get_prompt())
+
+
+        prompt = conv.get_prompt()
+
+
+        conversations.append(prompt)
 
     # Tokenize conversations
 
@@ -724,17 +736,30 @@ class LazySupervisedDataset(Dataset):
             if self.type == 'PET/CT':
                 pet_image_file = self.list_data_dict[i]['image']
                 ct_image_file = pet_image_file.replace('images', 'ref_images')
+                ct_seg_file = pet_image_file.replace('images', 'ref_images')
+                ct_seg_file = ct_seg_file.replace(
+                    f'/{ct_seg_file.split("/")[-2]}/',
+                    f'/{ct_seg_file.split("/")[-2]}_seg/'
+                )
                 image_folder = self.data_args.image_folder
-
+                path = os.path.join(image_folder, ct_image_file)
                 if self.augment is not None:
+                    print("1bugbugbubgu11111")
                     pet_image = load_with_augment(os.path.join(image_folder, pet_image_file), self.augment)
                     ct_image = load_with_augment(os.path.join(image_folder, ct_image_file), self.augment)
+                  #  ct_seg = load_with_augment(os.path.join(image_folder, ct_seg_file), self.augment)
                 else:
                     pet_image = np.load(os.path.join(image_folder, pet_image_file))
                     ct_image = np.load(os.path.join(image_folder, ct_image_file))
+                    ct_seg = np.load(os.path.join(image_folder, ct_seg_file))
     
+                # print(ct_image.shape, ct_seg.shape)
                 pet_image = process_image(pet_image)
                 ct_image = process_image(ct_image, is_pet=False)
+                ct_seg = torch.tensor(ct_seg, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                ct_seg = F.interpolate(ct_seg, size=(140, 480, 480), mode='nearest')
+                ct_seg = ct_seg.squeeze(0).long()
+                # print(ct_image.shape, ct_seg.shape)
             else:
                 image_file = self.list_data_dict[i]['image']
                 image_folder = self.data_args.image_folder
@@ -765,6 +790,8 @@ class LazySupervisedDataset(Dataset):
             if self.type == 'PET/CT':
                 data_dict['pet_image'] = pet_image
                 data_dict['ct_image'] = ct_image
+                data_dict['ct_seg'] = ct_seg
+                data_dict['path'] = path
             else:
                 data_dict['image'] = image
         elif self.data_args.is_multimodal:
@@ -801,11 +828,24 @@ class DataCollatorForSupervisedDataset(object):
         if 'pet_image' in instances[0] and 'ct_image' in instances[0]:
             pet_images = [instance['pet_image'] for instance in instances]
             ct_images = [instance['ct_image'] for instance in instances]
+            ct_segs = [instance['ct_seg'] for instance in instances]
+            paths = [instance['path'] for instance in instances]
             if all(x is not None and x.shape == pet_images[0].shape for x in pet_images) and \
-                all(x is not None and x.shape == ct_images[0].shape for x in ct_images):
-                batch['images'] = { 'PET': torch.stack(pet_images), 'CT': torch.stack(ct_images) } 
+                all(x is not None and x.shape == ct_images[0].shape for x in ct_images) and \
+                all(x is not None and x.shape == ct_segs[0].shape for x in ct_segs):
+                batch['images'] = {
+                    'PET': torch.stack(pet_images),
+                    'CT': torch.stack(ct_images),
+                    'CT_SEG': torch.stack(ct_segs),
+                    'PATHS': paths
+                }
             else:
-                batch['images'] = { 'PET': pet_images, 'CT': ct_images }
+                batch['images'] = {
+                    'PET': pet_images,
+                    'CT': ct_images,
+                    'CT_SEG': ct_segs,
+                    'PATHS': paths
+                }
         else:
             images = [instance['image'] for instance in instances]
             if all(x is not None and x.shape == images[0].shape for x in images):
@@ -946,6 +986,16 @@ def train(attn_implementation=None):
             padding_side="right",
             use_fast=False,
         )
+    print("tokenizer.model_max_length =", tokenizer.model_max_length)
+    print("model.config.max_position_embeddings =", getattr(model.config, "max_position_embeddings", None))
+    print("model.config.rope_scaling =", getattr(model.config, "rope_scaling", None))
+
+
+
+    model.tokenizer = tokenizer
+    if hasattr(model, "get_model"):
+        model.get_model().tokenizer = tokenizer
+
 
     if model_args.version == "v0":
         if tokenizer.pad_token is None:
@@ -962,6 +1012,8 @@ def train(attn_implementation=None):
             conversation_lib.default_conversation = conversation_lib.conv_templates[model_args.version]
         else:
             conversation_lib.default_conversation = conversation_lib.conv_templates["vicuna_v1"]
+
+   
 
     if model_args.vision_tower is not None:
         model.get_model().initialize_vision_modules(
@@ -1026,8 +1078,10 @@ def train(attn_implementation=None):
                     **data_module)
 
     if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
+        print(2)
         trainer.train(resume_from_checkpoint=True)
     else:
+        print(1)
         trainer.train()
     trainer.save_state()
 

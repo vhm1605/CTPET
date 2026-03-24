@@ -6,7 +6,7 @@
 
 # MODEL_VERSION=vicuna-v1-3-7b
 # MODEL_VERSION=llama-2-7b-chat
-export PYTHONPATH=/home/thaind/anonymous_project/VLMs:$PYTHONPATH
+export PYTHONPATH=/home/thaind/anonymous_project_copy/VLMs:$PYTHONPATH
 MODEL_VERSION=llava-med-v1.5-mistral-7b
 
 ########### DO NOT CHANGE ###########
@@ -28,7 +28,7 @@ deepspeed --num_gpus=1 --master_port=29501 llava/train/train_mem.py \
     --mm_use_im_start_end False \
     --mm_use_im_patch_token False \
     --bf16 True \
-    --output_dir /workdir/radish/PET-CT/ctvit_llavamed/checkpoints/align_region \
+    --output_dir /workdir/radish/PET-CT/ctvit_llavamed/checkpoints/align_region3 \
     --num_train_epochs 5 \
     --per_device_train_batch_size 2 \
     --per_device_eval_batch_size 2 \
@@ -41,7 +41,7 @@ deepspeed --num_gpus=1 --master_port=29501 llava/train/train_mem.py \
     --lr_scheduler_type "cosine" \
     --logging_steps 1 \
     --tf32 True \
-    --model_max_length 2048 \
+    --model_max_length 4096 \
     --gradient_checkpointing True \
     --dataloader_num_workers 4 \
     --lazy_preprocess True \

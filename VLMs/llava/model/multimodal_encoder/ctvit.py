@@ -198,7 +198,6 @@ class CTViT(nn.Module):
             nn.Linear(dim, channels * patch_width * patch_height * temporal_patch_size),
             Rearrange('b t h w (c pt p1 p2) -> b c (t pt) (h p1) (w p2)', p1 = patch_height, p2 = patch_width, pt = temporal_patch_size),
         )
-        
         self.gen_loss = hinge_gen_loss if use_hinge_loss else bce_gen_loss
 
     def calculate_video_token_mask(self, videos, video_frame_mask):
@@ -659,6 +658,176 @@ class CTViT(nn.Module):
             patch_embs_list.append(patch_embs)
 
         return patch_embs_list
+
+    
+
+
+
+    def extract_patch_embeddings_label(self, video, voxel_mask, video_seg, L):
+        """
+        video:      (b, c, t, H, W)
+        voxel_mask: (b, t, H, W) bool
+        video_seg:  (b, t, H, W) or (b, 1, t, H, W), giá trị là label
+        L:          số EARLY temporal layers
+
+        return:
+            region_embeds_per_sample: List[Tensor], len=b
+                region_embeds_per_sample[i].shape = (Ri, d)
+                Ri = số label khác nhau xuất hiện trong các selected patch của sample i
+
+            region_labels_per_sample: List[Tensor], len=b
+                region_labels_per_sample[i].shape = (Ri,)
+                chứa các label id tương ứng với region_embeds_per_sample[i]
+
+            region_patch_indices_per_sample: List[List[Tensor]], len=b
+                region_patch_indices_per_sample[i] là list độ dài Ri
+                mỗi phần tử là tensor shape (Mi, 3), gồm các patch index (t,h,w)
+                thuộc về label tương ứng
+        """
+
+        device = video.device
+        b = video.shape[0]
+
+        if video_seg.ndim == 5:
+            if video_seg.shape[1] == 1:
+                video_seg = video_seg.squeeze(1)
+            else:
+                raise ValueError(
+                    f"video_seg with 5 dims must have channel=1, got shape {video_seg.shape}"
+                )
+
+        if video_seg.ndim != 4:
+            raise ValueError(f"video_seg must have 4 or 5 dims, got shape {video_seg.shape}")
+
+        # 1. Patch embedding
+        tokens = self.to_patch_emb(video)   # (b, t, h, w, d)
+        _, t, h, w, d = tokens.shape
+        
+        video_shape = tuple(tokens.shape[:-1])
+
+        # 2. Patch mask
+        patch_mask = self.voxel_mask_to_patch_mask(voxel_mask)  # (b, t, h, w)
+
+        # 3. Seg -> patch labels
+        pt = self.temporal_patch_size
+        ph, pw = self.patch_size
+
+        seg_patches = rearrange(
+            video_seg,
+            'b (t pt) (h ph) (w pw) -> b t h w (pt ph pw)',
+            pt=pt, ph=ph, pw=pw
+        )  # (b, t, h, w, patch_volume)
+
+        # 4. Spatial transformer
+        x = rearrange(tokens, 'b t h w d -> (b t) (h w) d')
+        attn_bias = self.spatial_rel_pos_bias(h, w, device=device)
+
+        x = self.enc_spatial_transformer(
+            x,
+            attn_bias=attn_bias,
+            video_shape=video_shape
+        )
+
+        x = rearrange(x, '(b t) (h w) d -> b t h w d', b=b, h=h, w=w)
+
+        # 5. Temporal transformer
+        x_temp = rearrange(x, 'b t h w d -> (b h w) t d')
+
+        _, temporal_hiddens = self.enc_temporal_transformer(
+            x_temp,
+            return_hiddens=True,
+            video_shape=video_shape
+        )
+
+        temporal_hiddens = temporal_hiddens[:L]
+        temporal_hiddens = [
+            rearrange(ht, '(b h w) t d -> b t h w d', b=b, h=h, w=w)
+            for ht in temporal_hiddens
+        ]
+
+        # 6. Patch embeddings from early temporal layers
+        region_embeds_per_sample = []
+        region_labels_per_sample = []
+        region_patch_indices_per_sample = []
+
+        for i in range(b):
+            indices = patch_mask[i].nonzero(as_tuple=False)  # (Ni, 3)
+
+            if indices.numel() == 0:
+                region_embeds_per_sample.append(torch.empty(0, d, device=device))
+                region_labels_per_sample.append(torch.empty(0, dtype=torch.long, device=device))
+                region_patch_indices_per_sample.append([])
+                continue
+
+            layer_embs = []
+            for h_l in temporal_hiddens:
+                emb_l = h_l[
+                    i,
+                    indices[:, 0],
+                    indices[:, 1],
+                    indices[:, 2]
+                ]  # (Ni, d)
+                layer_embs.append(emb_l)
+
+            patch_embs = torch.stack(layer_embs, dim=0).mean(dim=0)  # (Ni, d)
+
+            # 7. Group patch theo label
+            label_to_patch_ids = {}
+
+            for patch_row, idx in enumerate(indices):
+                t_idx, h_idx, w_idx = idx.tolist()
+
+                patch_labels = seg_patches[i, t_idx, h_idx, w_idx]
+                uniq_labels = torch.unique(patch_labels)
+                uniq_labels = uniq_labels[uniq_labels != 0]
+
+                for lbl in uniq_labels.tolist():
+                    if lbl not in label_to_patch_ids:
+                        label_to_patch_ids[lbl] = []
+                    label_to_patch_ids[lbl].append(patch_row)
+
+            if len(label_to_patch_ids) == 0:
+                region_embeds_per_sample.append(torch.empty(0, d, device=device))
+                region_labels_per_sample.append(torch.empty(0, dtype=torch.long, device=device))
+                region_patch_indices_per_sample.append([])
+                continue
+
+            sorted_labels = sorted(label_to_patch_ids.keys())
+
+            sample_region_embeds = []
+            sample_region_labels = []
+            sample_region_patch_indices = []
+
+            for lbl in sorted_labels:
+                patch_rows = torch.tensor(
+                    label_to_patch_ids[lbl],
+                    dtype=torch.long,
+                    device=device
+                )  # (Mi,)
+
+                label_patch_embs = patch_embs[patch_rows]  # (Mi, d)
+
+                # pool các patch cùng label thành 1 vector
+                label_feat = label_patch_embs.mean(dim=0)  # (d,)
+
+                sample_region_embeds.append(label_feat)
+                sample_region_labels.append(lbl)
+                sample_region_patch_indices.append(indices[patch_rows])  # (Mi, 3)
+
+            sample_region_embeds = torch.stack(sample_region_embeds, dim=0)  # (Ri, d)
+            sample_region_labels = torch.tensor(
+                sample_region_labels, dtype=torch.long, device=device
+            )  # (Ri,)
+
+            region_embeds_per_sample.append(sample_region_embeds)
+            region_labels_per_sample.append(sample_region_labels)
+            region_patch_indices_per_sample.append(sample_region_patch_indices)
+
+        return (
+            region_embeds_per_sample,
+            region_labels_per_sample,
+            region_patch_indices_per_sample
+        )
 
 # --------------------------------
 

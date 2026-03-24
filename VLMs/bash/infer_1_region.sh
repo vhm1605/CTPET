@@ -5,38 +5,39 @@
 # Uncomment and set the following variables correspondingly to run this script:
 
 ################## VICUNA ##################
-export PYTHONPATH=/home/thaind/anonymous_project/VLMs:/home/thaind/anonymous_project/VLMs/llava/model/multimodal_encoder:$PYTHONPATH
+export PYTHONPATH=/home/thaind/anonymous_project_copy/VLMs:/home/thaind/anonymous_project_copy/VLMs/llava/model/multimodal_encoder:$PYTHONPATH
 
-# PROMPT_VERSION=v1
-# MODEL_VERSION=llava-med-v1.5-mistral-7b
+PROMPT_VERSION=v1
+MODEL_VERSION=llava-med-v1.5-mistral-7b
+
 ################## VICUNA ##################
 
 ################## LLaMA-2 ##################
-PROMPT_VERSION="llava_llama_2"
-MODEL_VERSION="llama-2-7b-chat"
+# PROMPT_VERSION="llava_llama_2"
+# MODEL_VERSION="llama-2-7b-chat"
 # PROMPT_VERSION=plain
 ################## LLaMA-2 ##################
 
-deepspeed --num_gpus=1 --master_port=29503 llava/train/train_mem.py \
+deepspeed --num_gpus=1 --master_port=29510 llava/train/test.py \
     --deepspeed ./scripts/zero2.json \
     --lora_enable True \
-    --model_name_or_path /workdir/radish/PET-CT/PET-CT-report/pretrained_weights/llm/M3D \
+    --model_name_or_path /workdir/radish/PET-CT/PET-CT-report/ckpt/llava-med-v1.5-mistral-7b \
     --version $PROMPT_VERSION \
     --type PET/CT \
-    --data_path /workdir/radish/PET-CT/PET-CT-report/instruction/instruction_train_data.json \
-    --eval_data_path /workdir/radish/PET-CT/PET-CT-report/instruction/instruction_val_data.json \
     --image_folder /workdir/radish/PET-CT/PET-CT-report \
     --vision_tower /workdir/radish/PET-CT/PET-CT-report/ckpt/petct_emb/ctvit.89000.pt \
-    --pretrain_mm_mlp_adapter /workdir/radish/PET-CT/ctvit_m3d/checkpoints/align/checkpoint-2786/mm_projector.bin \
-    --tune_mm_mlp_adapter True \
+    --pretrain_mm_mlp_adapter /workdir/radish/PET-CT/ctvit_llavamed/checkpoints/lora_region_minh2/checkpoint-5572/mm_projector.bin \
+    --lora_path /workdir/radish/PET-CT/ctvit_llavamed/checkpoints/lora_region_minh2/checkpoint-5572 \
+    --question_file /workdir/radish/PET-CT/PET-CT-report/pretrain_data/single_turn/align_test.json \
+    --temperature 0.4 \
     --mm_vision_select_layer -2 \
     --mm_use_im_start_end False \
     --mm_use_im_patch_token False \
     --bf16 True \
-    --output_dir /workdir/radish/PET-CT/ctvit_m3d/checkpoints/lora \
-    --num_train_epochs 20 \
-    --per_device_train_batch_size 4 \
-    --per_device_eval_batch_size 4 \
+    --output_dir /workdir/radish/PET-CT/ctvit_llavamed/infer/lora_region_minh2/checkpoint-5572/test \
+    --num_train_epochs 10 \
+    --per_device_train_batch_size 1 \
+    --per_device_eval_batch_size 1 \
     --gradient_accumulation_steps 1 \
     --eval_strategy "epoch" \
     --save_strategy "epoch" \
@@ -44,10 +45,11 @@ deepspeed --num_gpus=1 --master_port=29503 llava/train/train_mem.py \
     --weight_decay 0. \
     --warmup_ratio 0.03 \
     --lr_scheduler_type "cosine" \
-    --logging_steps 1 \ 
+    --logging_steps 1 \
     --tf32 True \
-    --model_max_length 2048 \
+    --model_max_length 4096 \
     --gradient_checkpointing True \
     --lazy_preprocess True \
     --dataloader_num_workers 4 \
     --report_to wandb
+

@@ -574,7 +574,9 @@ class LLaVATrainer(Trainer):
             if num_items_in_batch is not None:
                 loss_kwargs["num_items_in_batch"] = num_items_in_batch
             inputs = {**inputs, **loss_kwargs}
+        
         outputs = model(**inputs, output_attentions=True)
+        print(inputs.keys())
         pet_tensor = inputs["images"]["PET"]
         ct_tensor = inputs["images"]["CT"]
 

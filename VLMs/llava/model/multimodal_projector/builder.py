@@ -58,11 +58,24 @@ class Resampler(nn.Module):
         self.perceiver_g = PerceiverResampler(dim=vis_dim, num_latents=128)
         self.fc_g = nn.Linear(vis_dim, embedding_dim)
         
-        self.perceiver_fpet = PerceiverResampler(dim=vis_dim, num_latents=64)
-        self.fc_fpet = nn.Linear(vis_dim, embedding_dim)
+        # self.perceiver_fpet = PerceiverResampler(dim=vis_dim, num_latents=64)
+        # self.fc_fpet = nn.Linear(vis_dim, embedding_dim)
         
-        self.perceiver_fct = PerceiverResampler(dim=vis_dim, num_latents=64)
-        self.fc_fct = nn.Linear(vis_dim, embedding_dim)
+        # self.perceiver_fct = PerceiverResampler(dim=vis_dim, num_latents=64)
+        # self.fc_fct = nn.Linear(vis_dim, embedding_dim)
+
+        self.fc_fpet = nn.Sequential(
+            nn.Linear(vis_dim, embedding_dim),
+            nn.GELU(),
+            nn.Linear(embedding_dim, embedding_dim)
+        )
+
+        # focal_ct: giữ nguyên số token P
+        self.fc_fct = nn.Sequential(
+            nn.Linear(vis_dim, embedding_dim),
+            nn.GELU(),
+            nn.Linear(embedding_dim, embedding_dim)
+        )
         
     def forward(self, x, return_attn=False, mode="global"):
         if mode == "global":
@@ -81,35 +94,14 @@ class Resampler(nn.Module):
                 return x, attn
             return x 
         elif mode == "focal_pet":
-            B, L, C = x.shape
-            x = x.view(B, 1, 1, L, C)
-            
-            if return_attn:
-                x, attn = self.perceiver_fpet(x, return_attn)
-            else:
-                x = self.perceiver_fpet(x, return_attn)
-                
-            x = x.view(B, -1, x.shape[3])
-            x = self.fc_fpet(x)
-            
-            if return_attn:
-                return x, attn
-            return x 
+            # x: (B, P, N=vis_dim)
+            x = self.fc_fpet(x)             # (B, P, 4096)
+            return x
+
         elif mode == "focal_ct":
-            B, L, C = x.shape
-            x = x.view(B, 1, 1, L, C)
-            
-            if return_attn:
-                x, attn = self.perceiver_fct(x, return_attn)
-            else:
-                x = self.perceiver_fct(x, return_attn)
-                
-            x = x.view(B, -1, x.shape[3])
-            x = self.fc_fct(x)
-            
-            if return_attn:
-                return x, attn
-            return x 
+            # x: (B, P, N=vis_dim)
+            x = self.fc_fct(x)              # (B, P, 4096)
+            return x
         else:
             return None
     

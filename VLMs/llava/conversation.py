@@ -241,7 +241,8 @@ conv_vicuna_v0 = Conversation(
 
 conv_vicuna_v1 = Conversation(
     system="A chat between a curious user and an artificial intelligence assistant. "
-    "The assistant gives helpful, detailed, and polite answers to the user's questions.",
+    "The assistant gives helpful, detailed, and polite answers to the user's questions."
+    "I will provide a global embedding for the whole PET/CT image and image embeddings for only a subset of regions with high SUV values, not all regions. Each regional embedding corresponds to PET and CT information for its associated anatomical region. Please analyze all provided embeddings together with the textual descriptions and answer the question based on both the visual and textual content. ",
     roles=("USER", "ASSISTANT"),
     version="v1",
     messages=(),

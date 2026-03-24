@@ -15,6 +15,7 @@
 #    limitations under the License.
 
 import os
+import torch.nn.functional as F
 import copy
 from dataclasses import dataclass, field
 import json
@@ -93,7 +94,7 @@ class TrainingArguments(transformers.TrainingArguments):
     freeze_mm_mlp_adapter: bool = field(default=False)
     mpt_attn_impl: Optional[str] = field(default="triton")
     model_max_length: int = field(
-        default=512,
+        default=4096,
         metadata={
             "help":
             "Maximum sequence length. Sequences will be right padded (and possibly truncated)."
@@ -655,8 +656,8 @@ from tqdm import tqdm
 from llava.conversation import conv_templates
 num_chunks = 1 
 chunk_idx = 0 
-# conv_mode = 'llava_v1'
-conv_mode = 'llava_llama_2' 
+conv_mode = 'llava_v1'
+# conv_mode = 'llava_llama_2' 
 num_beams = 1 
 top_p = None
 
@@ -754,6 +755,11 @@ def test(attn_implementation=None):
             padding_side="right",
             use_fast=False,
         )
+
+    model.tokenizer = tokenizer
+    if hasattr(model, "get_model"):
+        model.get_model().tokenizer = tokenizer
+
 
     if model_args.version == "v0":
         if tokenizer.pad_token is None:
@@ -864,6 +870,11 @@ def test(attn_implementation=None):
             if data_args.type == 'PET/CT':
                 pet_image_file = line["image"]
                 ct_image_file = pet_image_file.replace('images', 'ref_images')
+                ct_seg_file = pet_image_file.replace('images', 'ref_images')
+                ct_seg_file = ct_seg_file.replace(
+                    f'/{ct_seg_file.split("/")[-2]}/',
+                    f'/{ct_seg_file.split("/")[-2]}_seg/'
+                )
             else:
                 image_file = line["image"]
             
@@ -892,6 +903,14 @@ def test(attn_implementation=None):
                 
                 ct_image = np.load(os.path.join(data_args.image_folder, ct_image_file))
                 ct_image_tensor = process_image(ct_image, is_pet=False)
+                image_folder = data_args.image_folder
+                path = os.path.join(image_folder, ct_image_file)
+
+                
+                ct_seg = np.load(os.path.join(data_args.image_folder, ct_seg_file))
+                ct_seg = torch.tensor(ct_seg, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                ct_seg = F.interpolate(ct_seg, size=(140, 480, 480), mode='nearest')
+                ct_seg_tensor = ct_seg.squeeze(0).long()
             else:
                 image = np.load(os.path.join(data_args.image_folder, image_file))
                 is_pet = False if data_args == 'CT' else True
@@ -903,7 +922,10 @@ def test(attn_implementation=None):
                     # images=image_tensor.unsqueeze(0).half().cuda(),
                     images={
                         'PET': pet_image_tensor.unsqueeze(0).to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device),
-                        'CT': ct_image_tensor.unsqueeze(0).to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device)
+                        'CT': ct_image_tensor.unsqueeze(0).to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device),
+                        'CT_SEG': ct_seg_tensor.unsqueeze(0).to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device),
+                        'PATHS': [path]
+
                     } if data_args.type == 'PET/CT' else {
                         'data': image_tensor.unsqueeze(0).to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device),
                     },
@@ -913,8 +935,8 @@ def test(attn_implementation=None):
                     temperature=temperature,
                     top_p=top_p,
                     num_beams=num_beams,
-                    # repetition_penalty=1.1,
-                    # no_repeat_ngram_size=3,
+                    repetition_penalty=1.1,
+                    no_repeat_ngram_size=3,
                     max_new_tokens=1024,
                     use_cache=True)
 

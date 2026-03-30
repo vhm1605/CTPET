@@ -1,5 +1,6 @@
 {
   "head_neck": {
+  "11": "esophagus",
   "22": "brain",
   "50": "vertebrae C7",
   "51": "vertebrae C6",
@@ -18,7 +19,10 @@
   "126": "thyroid gland"
 },
   "chest": {
+  "1": "liver",
+  "6": "aorta",
   "11": "esophagus",
+  "12": "stomach",
   "28": "left lung upper lobe",
   "29": "left lung lower lobe",
   "30": "right lung upper lobe",
@@ -81,7 +85,8 @@
   "122": "sternum",
   "123": "left subclavian artery",
   "124": "right subclavian artery",
-  "125": "superior vena cava"
+  "125": "superior vena cava",
+  "126": "thyroid gland"
 },
   "abdomen_pelvis": {
   "1": "liver",

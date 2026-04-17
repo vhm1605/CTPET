@@ -1,0 +1,40 @@
+{
+  "head_neck": {
+    "11": "esophagus",
+    "22": "brain",
+    "57": "trachea",
+    "120": "skull",
+    "121": "spinal cord",
+    "126": "thyroid gland"
+  },
+  "chest": {
+    "1": "liver",
+    "6": "aorta",
+    "11": "esophagus",
+    "12": "stomach",
+    "28": "left lung upper lobe",
+    "29": "left lung lower lobe",
+    "30": "right lung upper lobe",
+    "31": "right lung middle lobe",
+    "32": "right lung lower lobe",
+    "115": "heart",
+    "121": "spinal cord",
+    "122": "sternum"
+  },
+  "abdomen_pelvis": {
+    "1": "liver",
+    "3": "spleen",
+    "4": "pancreas",
+    "5": "right kidney",
+    "6": "aorta",
+    "8": "right adrenal gland",
+    "9": "left adrenal gland",
+    "10": "gallbladder",
+    "11": "esophagus",
+    "12": "stomach",
+    "14": "left kidney",
+    "15": "bladder",
+    "62": "colon",
+    "118": "prostate"
+  }
+}

@@ -1,0 +1,5 @@
+*.pt
+scripts/results/*
+download_ctclip_ckpt.py
+wandb/*
+results/

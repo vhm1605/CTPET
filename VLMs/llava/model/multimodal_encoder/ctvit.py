@@ -531,6 +531,27 @@ class CTViT(nn.Module):
             return loss, returned_recon
 
         return loss
+    
+    def safe_quantile(self, x, q, max_voxels=200000):
+        """
+        Approx quantile để tránh lỗi tensor quá lớn
+        """
+        x = x.flatten()
+
+        if x.numel() == 0:
+            return None
+
+        # sample thay vì dùng toàn bộ tensor
+        if x.numel() > max_voxels:
+            idx = torch.randint(
+                low=0,
+                high=x.numel(),
+                size=(max_voxels,),
+                device=x.device
+            )
+            x = x[idx]
+
+        return torch.quantile(x.float(), q)
 
     def create_pet_mask(self,
         pet_images,
@@ -555,6 +576,82 @@ class CTViT(nn.Module):
                 mask[b] |= (suv[b] > thr)
 
         return mask
+    
+
+    def create_pet_mask_3cond(self, pet_images, seg_masks, suv_ref_val=None):
+        """
+        pet_images  : (B, T, H, W) - Ảnh vùng cục bộ
+        seg_masks   : (B, T, H, W) - Mask vùng cục bộ
+        suv_ref_val : float hoặc list/tensor (B,) - Giá trị SUV Gan lấy từ JSON
+        return      : (B, T, H, W) bool
+        """
+
+        # Fix shape cho ảnh cục bộ
+        if pet_images.ndim == 5: pet_images = pet_images[:, 0]
+        if seg_masks.ndim == 5: seg_masks = seg_masks[:, 0]
+        
+        suv = pet_images
+        B = suv.shape[0]
+        mask_out = torch.zeros_like(suv, dtype=torch.bool)
+
+        for b in range(B):
+            pet_local = suv[b].detach().cpu().numpy()
+            seg_local = seg_masks[b].detach().cpu().numpy()
+
+            # ==========================================
+            # 1. XÁC ĐỊNH GIÁ TRỊ THAM CHIẾU (REFERENCE SUV)
+            # ==========================================
+            # Ưu tiên giá trị truyền vào từ JSON (suv_ref_val)
+            ref_val = None
+            if suv_ref_val is not None:
+                # Nếu là list/tensor theo batch thì lấy index b, nếu là số đơn thì lấy luôn
+                ref_val = suv_ref_val[b] if isinstance(suv_ref_val, (list, np.ndarray, torch.Tensor)) else suv_ref_val
+
+            # Fallback: Nếu JSON không có hoặc giá trị lỗi, tìm ở gan cục bộ
+            if ref_val is None or np.isnan(ref_val):
+                liver_mask_local = (seg_local == 1)
+                if np.any(liver_mask_local):
+                    ref_val = pet_local[liver_mask_local].mean()
+                else:
+                    # Fallback cuối cùng: trung bình của toàn bộ các vùng có mask
+                    ref_val = pet_local[seg_local > 0].mean() if np.any(seg_local > 0) else 1.0
+
+            # ==========================================
+            # 2. ITERATE CÁC ORGAN VÀ TẠO MASK
+            # ==========================================
+            final_mask = np.zeros_like(pet_local, dtype=bool)
+            organ_ids = np.unique(seg_local)
+            organ_ids = organ_ids[organ_ids > 0]
+
+            for oid in organ_ids:
+                organ_mask = (seg_local == oid)
+                if organ_mask.sum() < 50: continue
+
+                vals = pet_local[organ_mask]
+                o_mean = vals.mean()
+                o_std = vals.std()
+
+                # Ngưỡng Z-score nội bộ organ (ví dụ +3 std)
+                z_thr = o_mean + 3 * o_std
+
+                # 3 Điều kiện logic
+                hot_mask = (
+                    organ_mask & 
+                    (pet_local > z_thr) & 
+                    (pet_local > ref_val * 1.5) # So sánh với SUV gan từ JSON
+                )
+
+                # Khử nhiễu đốm nhỏ
+                labeled, num = label(hot_mask)
+                if num > 0:
+                    sizes = np.bincount(labeled.ravel())
+                    for i in range(1, num + 1):
+                        if sizes[i] > 10:
+                            final_mask |= (labeled == i)
+
+            mask_out[b] = torch.from_numpy(final_mask)
+
+        return mask_out
 
     def voxel_mask_to_patch_mask(self, voxel_mask):
         """
@@ -662,7 +759,184 @@ class CTViT(nn.Module):
     
 
 
+    def build_video_cache(self, video, L):
+        """
+        Precompute toàn bộ feature chỉ phụ thuộc video.
+        video: (b, c, t, H, W)
+        return:
+            temporal_hiddens: list of tensors
+        """
+        device = video.device
+        b = video.shape[0]
 
+        # ---------------------------------
+        # patch embedding
+        # ---------------------------------
+        tokens = self.to_patch_emb(video)  # (b, t, h, w, d)
+        _, t, h, w, d = tokens.shape
+        video_shape = tuple(tokens.shape[:-1])
+
+        # ---------------------------------
+        # spatial transformer
+        # ---------------------------------
+        x = rearrange(tokens, 'b t h w d -> (b t) (h w) d')
+        attn_bias = self.spatial_rel_pos_bias(h, w, device=device)
+
+        x = self.enc_spatial_transformer(
+            x,
+            attn_bias=attn_bias,
+            video_shape=video_shape
+        )
+
+        x = rearrange(
+            x,
+            '(b t) (h w) d -> b t h w d',
+            b=b, h=h, w=w
+        )
+
+        # ---------------------------------
+        # temporal transformer
+        # ---------------------------------
+        x_temp = rearrange(x, 'b t h w d -> (b h w) t d')
+
+        _, temporal_hiddens = self.enc_temporal_transformer(
+            x_temp,
+            return_hiddens=True,
+            video_shape=video_shape
+        )
+
+        temporal_hiddens = temporal_hiddens[:L]
+        temporal_hiddens = [
+            rearrange(
+                ht,
+                '(b h w) t d -> b t h w d',
+                b=b, h=h, w=w
+            )
+            for ht in temporal_hiddens
+        ]
+
+        return temporal_hiddens
+
+
+    def extract_patch_embeddings_label_cache(
+        self,
+        temporal_hiddens,
+        voxel_mask,
+        video_seg, 
+        device
+    ):
+        """
+        temporal_hiddens: ban đầu là một LIST Python có độ dài b (Batch).
+                          Mỗi phần tử trong list là Tensor 6D dạng [L, 1, t, h, w, d]
+                          ví dụ: [2, 1, 14, 24, 24, 512]
+        """
+        # 1. Đưa các tensor trong list lên đúng device và squeeze chiều đơn vị thừa (dim=1)
+        # Kích thước mỗi sample chuyển từ [L, 1, t, h, w, d] thành [L, t, h, w, d]
+        cleaned_hiddens = [th.to(device).squeeze(1) for th in temporal_hiddens]
+
+        # 2. Stack các sample lại theo chiều Batch (dim=0)
+        # Kết quả thu được Tensor 6D thống nhất: [b, L, t, h, w, d]
+        stacked_hiddens = torch.stack(cleaned_hiddens, dim=0)
+
+        # 3. Đổi chỗ dim 0 (b) và dim 1 (L) -> chuyển thành [L, b, t, h, w, d]
+        # Sau đó unbind theo dim=0 (chiều L) để tạo thành LIST chứa L phần tử.
+        # Mỗi phần tử lúc này là Tensor 5D chuẩn đét: [b, t, h, w, d]
+        temporal_hiddens = stacked_hiddens.permute(1, 0, 2, 3, 4, 5)
+        temporal_hiddens = torch.unbind(temporal_hiddens, dim=0)
+
+        # Trích xuất kích thước không gian chuẩn chỉnh từ đặc trưng đã biến đổi
+        # Lúc này temporal_hiddens[0].shape chắc chắn là (b, t, h, w, d) -> tức là (2, 14, 24, 24, 512)
+        b, t, h, w, d = temporal_hiddens[0].shape
+
+        # -----------------------------------------------------------------
+        # TOÀN BỘ LOGIC PHÍA DƯỚI GIỮ NGUYÊN BẢN CỦA ÔNG (KHÔNG ĐỔI MỘT CHỮ)
+        # -----------------------------------------------------------------
+        if video_seg.ndim == 5:
+            if video_seg.shape[1] == 1:
+                video_seg = video_seg.squeeze(1)
+            else:
+                raise ValueError(f"video_seg with 5 dims must have channel=1, got shape {video_seg.shape}")
+
+        if video_seg.ndim != 4:
+            raise ValueError(f"video_seg must have 4 dims after squeeze, got {video_seg.shape}")
+
+        video_seg = video_seg.to(device)
+        voxel_mask = voxel_mask.to(device)
+
+        patch_mask = self.voxel_mask_to_patch_mask(voxel_mask)  # (b, t, h, w)
+
+        pt = self.temporal_patch_size
+        ph, pw = self.patch_size
+
+        seg_patches = rearrange(
+            video_seg,
+            'b (t pt) (h ph) (w pw) -> b t h w (pt ph pw)',
+            pt=pt, ph=ph, pw=pw
+        )
+
+        region_embeds_per_sample = []
+        region_labels_per_sample = []
+        region_patch_indices_per_sample = []
+
+        for i in range(b):
+            indices = patch_mask[i].nonzero(as_tuple=False)  # (Ni, 3)
+
+            if indices.numel() == 0:
+                region_embeds_per_sample.append(torch.empty(0, d, device=device))
+                region_labels_per_sample.append(torch.empty(0, dtype=torch.long, device=device))
+                region_patch_indices_per_sample.append([])
+                continue
+
+            layer_embs = []
+            for h_l in temporal_hiddens:
+                emb_l = h_l[i, indices[:, 0], indices[:, 1], indices[:, 2]]
+                layer_embs.append(emb_l)
+
+            patch_embs = torch.stack(layer_embs, dim=0).mean(dim=0)  # (Ni, d)
+
+            label_to_patch_ids = {}
+            for patch_row, idx in enumerate(indices):
+                t_idx, h_idx, w_idx = idx.tolist()
+                patch_labels = seg_patches[i, t_idx, h_idx, w_idx]
+                
+                uniq_labels = torch.unique(patch_labels.float())
+                uniq_labels = uniq_labels[uniq_labels != 0]
+
+                for lbl in uniq_labels.tolist():
+                    if lbl not in label_to_patch_ids:
+                        label_to_patch_ids[lbl] = []
+                    label_to_patch_ids[lbl].append(patch_row)
+
+            if len(label_to_patch_ids) == 0:
+                region_embeds_per_sample.append(torch.empty(0, d, device=device))
+                region_labels_per_sample.append(torch.empty(0, dtype=torch.long, device=device))
+                region_patch_indices_per_sample.append([])
+                continue
+
+            sorted_labels = sorted(label_to_patch_ids.keys())
+            sample_region_embeds = []
+            sample_region_labels = []
+            sample_region_patch_indices = []
+
+            for lbl in sorted_labels:
+                patch_rows = torch.tensor(label_to_patch_ids[lbl], dtype=torch.long, device=device)
+                label_patch_embs = patch_embs[patch_rows]
+                
+                sample_region_embeds.append(label_patch_embs)
+                sample_region_labels.append(lbl)
+                sample_region_patch_indices.append(indices[patch_rows])
+
+            sample_region_labels = torch.tensor(sample_region_labels, dtype=torch.long, device=device)
+
+            region_embeds_per_sample.append(sample_region_embeds)
+            region_labels_per_sample.append(sample_region_labels)
+            region_patch_indices_per_sample.append(sample_region_patch_indices)
+
+        return (
+            region_embeds_per_sample,
+            region_labels_per_sample,
+            region_patch_indices_per_sample
+        )
     def extract_patch_embeddings_label(self, video, voxel_mask, video_seg, L):
         """
         video:      (b, c, t, H, W)

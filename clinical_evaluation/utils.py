@@ -224,11 +224,11 @@ def remove_and_report_single_word_strings(input_set: Set[str]) -> Set[str]:
             # item.split() tách chuỗi thành list các từ dựa trên khoảng trắng.
             # Nó tự động xử lý khoảng trắng thừa và trả về list rỗng cho chuỗi rỗng hoặc chỉ có khoảng trắng.
             words = item.split()
-            if len(words) == 1:
-                strings_to_remove.add(item) # Thêm vào danh sách sẽ bị loại bỏ
-            else:
+            # if len(words) == 1:
+            #     strings_to_remove.add(item) # Thêm vào danh sách sẽ bị loại bỏ
+            # else:
                 # Giữ lại các chuỗi có 0 từ (chuỗi rỗng/khoảng trắng) hoặc nhiều hơn 1 từ
-                strings_to_keep.add(item)
+            strings_to_keep.add(item)
         else:
             # Nếu không phải string, giữ lại nó (vì nó không phải là "chuỗi một từ")
             strings_to_keep.add(item)
@@ -410,13 +410,13 @@ def remove_and_report_single_word_strings_from_list(input_list: List[Any]) -> Li
         if isinstance(item, str):
             # item.split() handles leading/trailing/multiple spaces automatically
             words = item.split()
-            if len(words) == 1:
-                # It's a single-word string, mark it for removal reporting
-                unique_strings_removed.add(item)
-                # Do NOT add it to items_to_keep
-            else:
+            # if len(words) == 1:
+            #     # It's a single-word string, mark it for removal reporting
+            #     unique_strings_removed.add(item)
+            #     # Do NOT add it to items_to_keep
+            # else:
                 # It's not a single-word string (0 words or >1 word), keep it
-                items_to_keep.append(item)
+            items_to_keep.append(item)
         else:
             # If the item is not a string, keep it as is
             items_to_keep.append(item)

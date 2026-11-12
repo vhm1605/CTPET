@@ -6,7 +6,7 @@
 
 ################## VICUNA ##################
 export PYTHONPATH=/home/nvidia-lab/ai4life/CTPET/VLMs:/home/nvidia-lab/ai4life/CTPET/VLMs/llava/model/multimodal_encoder:$PYTHONPATH
-
+export PYTHONPATH=/home/nvidia-lab/ai4life/CTPET/VLMs/llava/model/multimodal_encoder:$PYTHONPATH
 PROMPT_VERSION=v1
 MODEL_VERSION=llava-med-v1.5-mistral-7b
 
@@ -18,7 +18,7 @@ MODEL_VERSION=llava-med-v1.5-mistral-7b
 # PROMPT_VERSION=plain
 ################## LLaMA-2 ##################
 
-deepspeed --num_gpus=1 --master_port=29502 llava/train/test.py \
+deepspeed --num_gpus=1 --master_port=29501 llava/train/test.py \
     --deepspeed ./scripts/zero2.json \
     --lora_enable True \
     --model_name_or_path /data/backup_sde1/PET-CT-report/ckpt/llava-med-v1.5-mistral-7b \
@@ -26,15 +26,15 @@ deepspeed --num_gpus=1 --master_port=29502 llava/train/test.py \
     --type PET/CT \
     --image_folder /data/backup_sde1/PET-CT-report \
     --vision_tower /data/backup_sde1/PET-CT-report/ckpt/petct_emb/ctvit.89000.pt \
-    --pretrain_mm_mlp_adapter /home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/checkpoints/lora_region_resume/checkpoint-11108/mm_projector.bin \
-    --lora_path /home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/checkpoints/lora_region_resume/checkpoint-11108 \
+    --pretrain_mm_mlp_adapter /home/nvidia-lab/ai4life/CTPET_new_filter/ctvit_llavamed/checkpoints/lora_region_new_suv_selection_final/checkpoint-22216/mm_projector.bin \
+    --lora_path /home/nvidia-lab/ai4life/CTPET_new_filter/ctvit_llavamed/checkpoints/lora_region_new_suv_selection_final/checkpoint-22216 \
     --question_file /data/backup_sde1/PET-CT-report/pretrain_data/single_turn/align_test.json \
     --temperature 0.5 \
     --mm_vision_select_layer -2 \
     --mm_use_im_start_end False \
     --mm_use_im_patch_token False \
     --bf16 True \
-    --output_dir /home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/infer/lora_region_resume/checkpoint-11108/test \
+    --output_dir /home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/infer/lora_region_new_suv_selection_final/checkpoint-22216/test/public \
     --num_train_epochs 10 \
     --per_device_train_batch_size 1 \
     --per_device_eval_batch_size 1 \

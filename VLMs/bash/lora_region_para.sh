@@ -33,14 +33,14 @@ deepspeed --num_gpus=1 --master_port=29501 llava/train/train_mem.py \
     --eval_data_path /data/backup_sde1/PET-CT-report/instruction/instruction_val_O_P.json \
     --image_folder /data/backup_sde1/PET-CT-report \
     --vision_tower /data/backup_sde1/PET-CT-report/ckpt/petct_emb/ctvit.89000.pt \
-    --pretrain_mm_mlp_adapter /home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/checkpoints/lora_region_resume/checkpoint-11108/mm_projector.bin \
-    --pretrained_lora_path /home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/checkpoints/lora_region_resume/checkpoint-11108 \
+    --pretrain_mm_mlp_adapter /home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/checkpoints/lora_region/checkpoint-5554/mm_projector.bin \
+    --pretrained_lora_path /home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/checkpoints/lora_region/checkpoint-5554 \
     --tune_mm_mlp_adapter True \
     --mm_vision_select_layer -2 \
     --mm_use_im_start_end False \
     --mm_use_im_patch_token False \
     --bf16 True \
-    --output_dir /home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/checkpoints/lora_region_para \
+    --output_dir /home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/checkpoints/lora_region_para_resume_2 \
     --num_train_epochs 20 \
     --per_device_train_batch_size 2 \
     --per_device_eval_batch_size 2 \

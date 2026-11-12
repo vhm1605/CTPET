@@ -1,0 +1,54 @@
+[
+  {
+    "model": "qwen_suv_threshold_old",
+    "path": "/home/nvidia-lab/ai4life/PETCT_qwen/checkpoints/petct_region_new_suv/infer/checkpoint-10830/answer.jsonl",
+    "output": "/home/nvidia-lab/ai4life/CTPET/metric_out/qwen_suv_threshold_old_pet_uptake_metric.txt",
+    "num_pred": 1725,
+    "num_gt": 1725,
+    "num_matched": 1725,
+    "num_bad_lines": 0,
+    "BLEU": 0.09930898387521545,
+    "ROUGE-1 F1": 0.5028526525318638,
+    "ROUGE-L F1": 0.37120405029421044,
+    "BERTScore F1": 0.764686293463776
+  },
+  {
+    "model": "qwen_suv_threshold",
+    "path": "/home/nvidia-lab/ai4life/PETCT_qwen/checkpoints/petct_region_new_suv_low_lr/infer/checkpoint-5415/answer.jsonl",
+    "output": "/home/nvidia-lab/ai4life/CTPET/metric_out/qwen_suv_threshold_pet_uptake_metric.txt",
+    "num_pred": 1725,
+    "num_gt": 1725,
+    "num_matched": 1725,
+    "num_bad_lines": 0,
+    "BLEU": 0.11347738016352472,
+    "ROUGE-1 F1": 0.4575410262418958,
+    "ROUGE-L F1": 0.34434750417294036,
+    "BERTScore F1": 0.7484183691895526
+  },
+  {
+    "model": "qwen_suv_ratio",
+    "path": "/home/nvidia-lab/ai4life/PETCT_qwen/checkpoints/petct_region_fix/infer/checkpoint-10830/answer.jsonl",
+    "output": "/home/nvidia-lab/ai4life/CTPET/metric_out/qwen_suv_ratio_pet_uptake_metric.txt",
+    "num_pred": 1725,
+    "num_gt": 1725,
+    "num_matched": 1725,
+    "num_bad_lines": 0,
+    "BLEU": 0.13440391401832968,
+    "ROUGE-1 F1": 0.5482521227825274,
+    "ROUGE-L F1": 0.4109039496603305,
+    "BERTScore F1": 0.7838178867533587
+  },
+  {
+    "model": "qwen_pet_ct",
+    "path": "/home/nvidia-lab/ai4life/kienpt/PET-CT/ctvit_qwen_instruct/checkpoints/petct_fix_prompt_final_v5/infer1_512/test/answer.jsonl",
+    "output": "/home/nvidia-lab/ai4life/CTPET/metric_out/qwen_pet_ct_pet_uptake_metric.txt",
+    "num_pred": 1725,
+    "num_gt": 1725,
+    "num_matched": 1725,
+    "num_bad_lines": 0,
+    "BLEU": 0.1499844650363347,
+    "ROUGE-1 F1": 0.508010171733189,
+    "ROUGE-L F1": 0.3472691681029397,
+    "BERTScore F1": 0.770501438603885
+  }
+]

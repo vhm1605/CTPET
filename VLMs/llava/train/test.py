@@ -37,6 +37,7 @@ from llava.model import *
 from llava.mm_utils import tokenizer_image_token
 
 from PIL import Image
+from suv_calc import *
 import os 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
@@ -905,6 +906,12 @@ def test(attn_implementation=None):
                 ct_image_tensor = process_image(ct_image, is_pet=False)
                 image_folder = data_args.image_folder
                 path = os.path.join(image_folder, ct_image_file)
+                
+                suv_tensor, issues, region = pipeline_pet_to_suv_torch(os.path.join(data_args.image_folder, pet_image_file))
+
+                suv_tensor = suv_tensor.unsqueeze(0).unsqueeze(0)
+                suv_tensor = F.interpolate(suv_tensor, size=(140, 480, 480), mode='trilinear', align_corners=False)
+                suv_tensor = suv_tensor.squeeze(0).float()
 
                 
                 ct_seg = np.load(os.path.join(data_args.image_folder, ct_seg_file))
@@ -924,6 +931,7 @@ def test(attn_implementation=None):
                         'PET': pet_image_tensor.unsqueeze(0).to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device),
                         'CT': ct_image_tensor.unsqueeze(0).to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device),
                         'CT_SEG': ct_seg_tensor.unsqueeze(0).to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device),
+                        'SUV': suv_tensor.unsqueeze(0).to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device),
                         'PATHS': [path]
 
                     } if data_args.type == 'PET/CT' else {

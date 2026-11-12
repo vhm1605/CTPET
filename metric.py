@@ -38,7 +38,7 @@ def compute_metrics(pred_text, gt_text):
     rouge1_f = rouge_scores['rouge1'].fmeasure
     rougeL_f = rouge_scores['rougeL'].fmeasure
 
-    P, R, F1 = bert_score.score([pred_text], [gt_text], model_type='/home/nvidia-lab/ai4life/kienpt/bert-multilingual', num_layers=9, verbose=False)
+    P, R, F1 = bert_score.score([pred_text], [gt_text], model_type='/home/nvidia-lab/ai4life/bert-multilingual', num_layers=9, verbose=False)
     bert_f = F1.mean().item()
 
     return {
@@ -51,7 +51,7 @@ def compute_metrics(pred_text, gt_text):
 # Đọc file ans_conv_val_filtered.jsonl
 
 ans_dict = {}
-with open('/home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/infer/lora_region_resume/checkpoint-11108/test/answer.jsonl', 'r', encoding='utf-8') as f:
+with open('/home/nvidia-lab/ai4life/CTPET/VLMs/baseline/a.jsonl', 'r', encoding='utf-8') as f:
     for line in f:
         item = json.loads(line)
         ans_dict[item['question_id']] = item['text']
@@ -71,7 +71,7 @@ all_metrics = {
     "BERTScore F1": []
 }
 
-output_path = "petct_ctvit_llavamed_region_resume.txt"
+output_path = "baseline_final.txt"
 # output_path = "ct_ctvit_qwen_instruct_lora_ver2_ckpt_13435_new_compare.txt"
 print('save to', output_path)
 with open(output_path, "a", encoding="utf-8") as out_file:

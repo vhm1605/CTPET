@@ -17,6 +17,7 @@
 import os
 import copy
 import torch.nn.functional as F
+from suv_calc import *
 from dataclasses import dataclass, field
 import json
 import logging
@@ -41,9 +42,9 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import wandb
-wandb.login(key='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')
+wandb.login(key='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')
 wandb.init(
-    project="VLM",
+    project="VLM_cosmos",
     name="CTViT_Mistral_lora_region_para"
 )
 
@@ -741,17 +742,19 @@ class LazySupervisedDataset(Dataset):
                     f'/{ct_seg_file.split("/")[-2]}/',
                     f'/{ct_seg_file.split("/")[-2]}_seg/'
                 )
+                cache_file = pet_image_file.replace('images', 'cache').replace('.npy', '.pt')
                 image_folder = self.data_args.image_folder
                 path = os.path.join(image_folder, ct_image_file)
                 if self.augment is not None:
                     print("1bugbugbubgu11111")
-                    pet_image = load_with_augment(os.path.join(image_folder, pet_image_file), self.augment)
-                    ct_image = load_with_augment(os.path.join(image_folder, ct_image_file), self.augment)
+                    # pet_image = load_with_augment(os.path.join(image_folder, pet_image_file), self.augment)
+                    # ct_image = load_with_augment(os.path.join(image_folder, ct_image_file), self.augment)
                   #  ct_seg = load_with_augment(os.path.join(image_folder, ct_seg_file), self.augment)
                 else:
                     pet_image = np.load(os.path.join(image_folder, pet_image_file))
                     ct_image = np.load(os.path.join(image_folder, ct_image_file))
                     ct_seg = np.load(os.path.join(image_folder, ct_seg_file))
+                    suv_tensor, issues, region = pipeline_pet_to_suv_torch(os.path.join(image_folder, pet_image_file))
     
                 # print(ct_image.shape, ct_seg.shape)
                 pet_image = process_image(pet_image)
@@ -759,6 +762,11 @@ class LazySupervisedDataset(Dataset):
                 ct_seg = torch.tensor(ct_seg, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
                 ct_seg = F.interpolate(ct_seg, size=(140, 480, 480), mode='nearest')
                 ct_seg = ct_seg.squeeze(0).long()
+                
+
+                suv_tensor = suv_tensor.unsqueeze(0).unsqueeze(0)
+                suv_tensor = F.interpolate(suv_tensor, size=(140, 480, 480), mode='trilinear', align_corners=False)
+                suv_tensor = suv_tensor.squeeze(0).float()
                 # print(ct_image.shape, ct_seg.shape)
             else:
                 image_file = self.list_data_dict[i]['image']
@@ -792,6 +800,7 @@ class LazySupervisedDataset(Dataset):
                 data_dict['ct_image'] = ct_image
                 data_dict['ct_seg'] = ct_seg
                 data_dict['path'] = path
+                data_dict['suv_tensor'] = suv_tensor
             else:
                 data_dict['image'] = image
         elif self.data_args.is_multimodal:
@@ -830,19 +839,24 @@ class DataCollatorForSupervisedDataset(object):
             ct_images = [instance['ct_image'] for instance in instances]
             ct_segs = [instance['ct_seg'] for instance in instances]
             paths = [instance['path'] for instance in instances]
+            suv_tensors = [instance['suv_tensor'] for instance in instances]
+            
+
+
             if all(x is not None and x.shape == pet_images[0].shape for x in pet_images) and \
                 all(x is not None and x.shape == ct_images[0].shape for x in ct_images) and \
                 all(x is not None and x.shape == ct_segs[0].shape for x in ct_segs):
                 batch['images'] = {
                     'PET': torch.stack(pet_images),
                     'CT': torch.stack(ct_images),
+                    'SUV': torch.stack(suv_tensors),
                     'CT_SEG': torch.stack(ct_segs),
                     'PATHS': paths
                 }
             else:
                 batch['images'] = {
                     'PET': pet_images,
-                    'CT': ct_images,
+                   'CT': ct_images,
                     'CT_SEG': ct_segs,
                     'PATHS': paths
                 }

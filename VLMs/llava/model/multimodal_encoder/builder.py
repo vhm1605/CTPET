@@ -91,6 +91,29 @@ def build_vision_tower(vision_tower_cfg, **kwargs):
     #         model.is_loaded = True
     #         model.hidden_size = 16384
     #         return model
+    elif 'cosmos' in vision_tower or 'Cosmos' in vision_tower:
+        print("ok\nok\nok\n")
+        if '' in vision_tower:
+            model = PETCTFusion()
+            ckpt = torch.load(vision_tower, map_location="cpu")
+
+            # nếu ckpt là dict có nhiều field thì lấy đúng state_dict
+            state_dict = ckpt["state_dict"] if "state_dict" in ckpt else ckpt
+
+            # lọc các weight thuộc visual_transformer và bỏ prefix
+            visual_sd = {
+                k.replace("visual_transformer.", ""): v
+                for k, v in state_dict.items()
+                if k.startswith("visual_transformer.")
+            }
+
+            # load vào biến model của bạn
+            model.load_state_dict(visual_sd, strict=False)
+            model.is_loaded = True
+            model.hidden_size = 512
+            print("Loaded PETCT Fusion Cosmos model from ", vision_tower)
+            model.eval()
+            return model
 
     return None 
     

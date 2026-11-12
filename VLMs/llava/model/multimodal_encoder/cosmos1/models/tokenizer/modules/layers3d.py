@@ -789,17 +789,279 @@ class EncoderFactorized(nn.Module):
             ),
         )
 
+    def extract_patch_embeddings_label(self, video, voxel_mask, video_seg, L):
+        """
+        Trích xuất feature patch của Cosmos và gom các patch theo nhãn segmentation.
+
+        Args:
+            video:      Tensor (B, C, T, H, W).
+            voxel_mask: Tensor (B, T, H, W) hoặc (B, 1, T, H, W).
+                        Patch latent được chọn nếu vùng voxel tương ứng có ít nhất
+                        một giá trị khác 0.
+            video_seg:  Tensor (B, T, H, W) hoặc (B, 1, T, H, W), chứa label id.
+            L:          Số hidden middle layers đầu tiên dùng để lấy trung bình.
+                        Cosmos có 3 hidden tương thích kích thước:
+                        mid.block_1, mid.attn_1 và mid.block_2.
+
+        Returns:
+            region_embeds_per_sample:
+                List theo batch. Mỗi phần tử là list các Tensor (Mi, D), một
+                Tensor cho mỗi label.
+            region_labels_per_sample:
+                List theo batch. Mỗi phần tử là Tensor (Ri,) chứa label id.
+            region_patch_indices_per_sample:
+                List theo batch. Mỗi phần tử là list các Tensor (Mi, 3), chứa
+                chỉ số latent patch theo thứ tự (t, h, w).
+        """
+     #   print(video.shape, voxel_mask.shape, video_seg.shape)
+     #   print("\n\n\n\n\n")
+        if video.ndim != 5:
+            raise ValueError(f"video must have shape (B,C,T,H,W), got {video.shape}")
+
+        device = video.device
+        batch_size = video.shape[0]
+
+        if voxel_mask.ndim == 5:
+            if voxel_mask.shape[1] != 1:
+                raise ValueError(
+                    "voxel_mask with 5 dims must have channel=1, "
+                    f"got {voxel_mask.shape}"
+                )
+            voxel_mask = voxel_mask[:, 0]
+        if voxel_mask.ndim != 4:
+            raise ValueError(
+                f"voxel_mask must have 4 or 5 dims, got {voxel_mask.shape}"
+            )
+
+        if video_seg.ndim == 5:
+            if video_seg.shape[1] != 1:
+                raise ValueError(
+                    "video_seg with 5 dims must have channel=1, "
+                    f"got {video_seg.shape}"
+                )
+            video_seg = video_seg[:, 0]
+        if video_seg.ndim != 4:
+            raise ValueError(
+                f"video_seg must have 4 or 5 dims, got {video_seg.shape}"
+            )
+
+        if voxel_mask.shape[0] != batch_size or video_seg.shape[0] != batch_size:
+            raise ValueError("video, voxel_mask and video_seg must have the same batch size")
+        if voxel_mask.shape[-3:] != video.shape[-3:]:
+            raise ValueError(
+                "voxel_mask spatial-temporal shape must match video: "
+                f"{voxel_mask.shape[-3:]} vs {video.shape[-3:]}"
+            )
+        if video_seg.shape[-3:] != video.shape[-3:]:
+            raise ValueError(
+                "video_seg spatial-temporal shape must match video: "
+                f"{video_seg.shape[-3:]} vs {video.shape[-3:]}"
+            )
+
+        if not isinstance(L, int) or L < 1:
+            raise ValueError(f"L must be a positive integer, got {L}")
+
+        model_param = next(self.parameters())
+
+        video = video.to(
+            device=model_param.device,
+            dtype=model_param.dtype,
+        )
+        voxel_mask = voxel_mask.to(device=model_param.device).bool()
+        video_seg = video_seg.to(device=model_param.device)
+
+        # Checkpoint Cosmos này được train với input 3 channel.
+        # Với PET/CT 1 channel, lặp dữ liệu sang 3 channel để giữ nguyên
+        # kiến trúc và load chính xác toàn bộ weight cũ.
+        expected_patched_channels = self.conv_in[0].conv3d.in_channels
+        patch_volume = getattr(self.patcher3d, "patch_size", None)
+
+        if video.shape[1] == 1:
+            video = video.repeat(1, 3, 1, 1, 1)
+        elif video.shape[1] != 3:
+            raise ValueError(
+                "Cosmos encoder checkpoint expects 3 input channels before "
+                f"Patcher3D, but got video shape {tuple(video.shape)}"
+            )
+
+        # -------------------------------------------------------------
+        # 1. Chạy phần encoder downsampling giống forward().
+        # -------------------------------------------------------------
+        x = self.patcher3d(video)
+
+        if x.shape[1] != expected_patched_channels:
+            raise RuntimeError(
+                "Patcher3D output channels do not match conv_in: "
+                f"got {x.shape[1]}, expected {expected_patched_channels}. "
+                "Check patch_size and the original Cosmos config."
+            )
+
+        h = self.conv_in(x)
+
+        for i_level in range(self.num_resolutions):
+            for i_block in range(self.num_res_blocks):
+                h = self.down[i_level].block[i_block](h)
+                if len(self.down[i_level].attn) > 0:
+                    h = self.down[i_level].attn[i_block](h)
+            if i_level != self.num_resolutions - 1:
+                h = self.down[i_level].downsample(h)
+
+        # -------------------------------------------------------------
+        # 2. Lấy hidden ở middle. Các tensor đều có shape (B,D,t,h,w).
+        # -------------------------------------------------------------
+        middle_hiddens = []
+
+        h = self.mid.block_1(h)
+        middle_hiddens.append(h)
+
+        h = self.mid.attn_1(h)
+        middle_hiddens.append(h)
+
+        h = self.mid.block_2(h)
+        middle_hiddens.append(h)
+
+        num_layers = min(L, len(middle_hiddens))
+        patch_features = torch.stack(
+            middle_hiddens[:num_layers], dim=0
+        ).mean(dim=0)  # (B, D, t, h, w)
+
+        _, feature_dim, out_t, out_h, out_w = patch_features.shape
+        patch_features = patch_features.permute(0, 2, 3, 4, 1).contiguous()
+
+        # Chọn latent patch nếu bin voxel tương ứng chứa ít nhất một voxel mask.
+        patch_mask = torch.nn.functional.adaptive_max_pool3d(
+            voxel_mask.float().unsqueeze(1),
+            output_size=(out_t, out_h, out_w),
+        ).squeeze(1).bool()
+
+        in_t, in_h, in_w = video_seg.shape[-3:]
+
+        # Biên bin giống cách adaptive pooling chia input cho output.
+        def bin_bounds(index, in_size, out_size):
+            start = (index * in_size) // out_size
+            end = ((index + 1) * in_size + out_size - 1) // out_size
+            return start, min(end, in_size)
+
+        region_embeds_per_sample = []
+        region_labels_per_sample = []
+        region_patch_indices_per_sample = []
+
+        # -------------------------------------------------------------
+        # 3. Gom selected latent patch theo mọi label xuất hiện trong bin.
+        # Một patch có thể thuộc nhiều label, giống logic CTViT.
+        # -------------------------------------------------------------
+        for sample_idx in range(batch_size):
+            indices = patch_mask[sample_idx].nonzero(as_tuple=False)  # (N,3)
+
+            if indices.numel() == 0:
+                region_embeds_per_sample.append([])
+                region_labels_per_sample.append(
+                    torch.empty(0, dtype=torch.long, device=device)
+                )
+                region_patch_indices_per_sample.append([])
+                continue
+
+            selected_features = patch_features[
+                sample_idx,
+                indices[:, 0],
+                indices[:, 1],
+                indices[:, 2],
+            ]  # (N,D)
+
+            label_to_patch_rows = {}
+
+            for patch_row, patch_index in enumerate(indices):
+                t_idx, h_idx, w_idx = patch_index.tolist()
+                t0, t1 = bin_bounds(t_idx, in_t, out_t)
+                h0, h1 = bin_bounds(h_idx, in_h, out_h)
+                w0, w1 = bin_bounds(w_idx, in_w, out_w)
+
+                labels = torch.unique(
+                    video_seg[sample_idx, t0:t1, h0:h1, w0:w1]
+                )
+                labels = labels[labels != 0]
+
+                for label_value in labels.tolist():
+                    # Chuẩn hóa key về int để labels trả ra có dtype long.
+                    label_id = int(label_value)
+                    label_to_patch_rows.setdefault(label_id, []).append(patch_row)
+
+            if not label_to_patch_rows:
+                region_embeds_per_sample.append([])
+                region_labels_per_sample.append(
+                    torch.empty(0, dtype=torch.long, device=device)
+                )
+                region_patch_indices_per_sample.append([])
+                continue
+
+            sample_region_embeds = []
+            sample_region_labels = []
+            sample_region_patch_indices = []
+
+            for label_id in sorted(label_to_patch_rows):
+                patch_rows = torch.tensor(
+                    label_to_patch_rows[label_id],
+                    dtype=torch.long,
+                    device=device,
+                )
+                sample_region_embeds.append(selected_features[patch_rows])
+                sample_region_labels.append(label_id)
+                sample_region_patch_indices.append(indices[patch_rows])
+
+            region_embeds_per_sample.append(sample_region_embeds)
+            region_labels_per_sample.append(
+                torch.tensor(sample_region_labels, dtype=torch.long, device=device)
+            )
+            region_patch_indices_per_sample.append(sample_region_patch_indices)
+
+        return (
+            region_embeds_per_sample,
+            region_labels_per_sample,
+            region_patch_indices_per_sample,
+        )
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.ndim != 5:
+            raise ValueError(
+                f"EncoderFactorized expects (B,C,T,H,W), got {tuple(x.shape)}"
+            )
+
+        model_param = next(self.parameters())
+        x = x.to(
+            device=model_param.device,
+            dtype=model_param.dtype,
+        )
+
+        # Checkpoint Cosmos được train với input 3 channels.
+        # PET/CT hiện tại là 1 channel nên lặp thành 3 channels.
+        if x.shape[1] == 1:
+            x = x.repeat(1, 3, 1, 1, 1)
+        elif x.shape[1] != 3:
+            raise ValueError(
+                f"Cosmos encoder expects 1 or 3 input channels, got {x.shape[1]}"
+            )
+
         x = self.patcher3d(x)
+
+        expected_channels = self.conv_in[0].conv3d.in_channels
+        if x.shape[1] != expected_channels:
+            raise RuntimeError(
+                "Channel mismatch after Patcher3D: "
+                f"got {x.shape[1]}, but conv_in expects {expected_channels}"
+            )
 
         # downsampling
         hs = [self.conv_in(x)]
+
         for i_level in range(self.num_resolutions):
             for i_block in range(self.num_res_blocks):
                 h = self.down[i_level].block[i_block](hs[-1])
+
                 if len(self.down[i_level].attn) > 0:
                     h = self.down[i_level].attn[i_block](h)
+
                 hs.append(h)
+
             if i_level != self.num_resolutions - 1:
                 hs.append(self.down[i_level].downsample(hs[-1]))
 
@@ -813,6 +1075,7 @@ class EncoderFactorized(nn.Module):
         h = self.norm_out(h)
         h = nonlinearity(h)
         h = self.conv_out(h)
+
         return h
 
 

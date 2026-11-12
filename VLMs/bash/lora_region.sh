@@ -6,7 +6,7 @@
 
 ################## VICUNA ##################
 export PYTHONPATH=/home/nvidia-lab/ai4life/CTPET/VLMs:/home/nvidia-lab/ai4life/CTPET/VLMs/llava/model/multimodal_encoder:$PYTHONPATH
-
+export PYTHONPATH=/home/nvidia-lab/ai4life/CTPET/VLMs/llava/model/multimodal_encoder:$PYTHONPATH
 PROMPT_VERSION=v1
 MODEL_VERSION=llava-med-v1.5-mistral-7b
 ################## VICUNA ##################
@@ -23,7 +23,7 @@ MODEL_VERSION=llava-med-v1.5-mistral-7b
 
 # --pretrained_lora_path /home/jovyan/shared/tienhuu060102/data-petct/pretrained_weights/MultimodalFM/adaptive_cosmos_llavamed/lora/checkpoint-1740 \
 
-deepspeed --num_gpus=1 --master_port=29501 llava/train/train_mem.py \
+deepspeed --num_gpus=1 --master_port=29510 llava/train/train_mem.py \
     --deepspeed ./scripts/zero2.json \
     --lora_enable True \
     --model_name_or_path /data/backup_sde1/PET-CT-report/ckpt/llava-med-v1.5-mistral-7b \
@@ -33,23 +33,23 @@ deepspeed --num_gpus=1 --master_port=29501 llava/train/train_mem.py \
     --eval_data_path /data/backup_sde1/PET-CT-report/instruction/instruction_val_data.json \
     --image_folder /data/backup_sde1/PET-CT-report \
     --vision_tower /data/backup_sde1/PET-CT-report/ckpt/petct_emb/ctvit.89000.pt \
-    --pretrain_mm_mlp_adapter /home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/checkpoints/lora_region/checkpoint-5554/mm_projector.bin \
-    --pretrained_lora_path /home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/checkpoints/lora_region/checkpoint-5554 \
+    --pretrain_mm_mlp_adapter /home/nvidia-lab/ai4life/CTPET_new_filter/ctvit_llavamed/checkpoints/lora_region_new_suv_selection_final/checkpoint-22216/mm_projector.bin \
+    --pretrained_lora_path /home/nvidia-lab/ai4life/CTPET_new_filter/ctvit_llavamed/checkpoints/lora_region_new_suv_selection_final/checkpoint-22216 \
     --tune_mm_mlp_adapter True \
     --mm_vision_select_layer -2 \
     --mm_use_im_start_end False \
     --mm_use_im_patch_token False \
     --bf16 True \
-    --output_dir /home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/checkpoints/lora_region_resume \
+    --output_dir /home/nvidia-lab/ai4life/CTPET/ctvit_llavamed/checkpoints/public  \
     --num_train_epochs 20 \
     --per_device_train_batch_size 2 \
     --per_device_eval_batch_size 2 \
     --gradient_accumulation_steps 1 \
     --eval_strategy "epoch" \
     --save_strategy "epoch" \
-    --learning_rate 2e-5 \
+    --learning_rate 1e-6 \
     --weight_decay 0. \
-    --warmup_ratio 0.03 \
+    --warmup_ratio 0.0 \
     --lr_scheduler_type "cosine" \
     --logging_steps 1 \
     --tf32 True \
